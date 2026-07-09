@@ -1,0 +1,107 @@
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:#fff;font-family:system-ui,-apple-system,sans-serif;}
+canvas{display:block;border-radius:12px;border:1.5px solid #e8e8e8;touch-action:none;}
+.fml{font-size:13px;padding:10px 16px;border-radius:20px;background:#f5f5f5;border:1.5px solid #d0d0d0;color:#2c2c2a;margin:6px 0;font-family:ui-monospace,monospace;line-height:1.8;}
+.row{display:flex;align-items:center;gap:8px;margin:6px 0;flex-wrap:wrap;}
+.pill{font-size:13px;font-weight:500;color:#2c2c2a;background:#f5f5f5;border:1.5px solid #d0d0d0;border-radius:20px;padding:6px 14px;white-space:nowrap;}
+.btn{padding:7px 15px;border-radius:20px;font-size:13px;font-weight:500;cursor:pointer;border:1.5px solid #d0d0d0;background:#fff;color:#2c2c2a;}
+.btn.on{border-color:#185fa5;background:#e6f1fb;color:#185fa5;}
+.val{min-width:56px;text-align:center;font-size:13px;font-weight:500;color:#2c2c2a;background:#f5f5f5;border:1.5px solid #d0d0d0;border-radius:20px;padding:5px 10px;}
+.info{font-size:12px;padding:8px 14px;border-radius:20px;background:#f5f5f5;border:1.5px solid #d0d0d0;color:#555;margin:6px 0;font-family:ui-monospace,monospace;line-height:1.7;}
+input[type=range]{flex:1;min-width:100px;}
+</style>
+
+<canvas id="cv" style="width:100%;height:56vh;min-height:350px;"></canvas>
+<div class="fml" id="fml"></div>
+
+<div class="row">
+  <span class="pill" style="color:#185fa5;border-color:#b5d4f4;">fréquence d'excitation ω/ω₀</span>
+  <input type="range" id="r" min="0.1" max="2.5" value="0.6" step="0.01" style="accent-color:#378ADD;max-width:220px;">
+  <span class="val" id="rv" style="color:#185fa5;border-color:#b5d4f4;">0.60</span>
+</div>
+<div class="row">
+  <span class="pill" style="color:#BA7517;border-color:#f5c88f;">amortissement ζ</span>
+  <input type="range" id="z" min="0.03" max="0.7" value="0.12" step="0.01" style="accent-color:#BA7517;max-width:200px;">
+  <span class="val" id="zv" style="color:#BA7517;border-color:#f5c88f;">0.12</span>
+  <button class="btn on" id="bP" onclick="paused=!paused;this.className=paused?'btn':'btn on';this.textContent=paused?'Lecture':'Pause';">Pause</button>
+  <button class="btn" style="border-color:#79c6a6;color:#0F6E56;" onclick="rr=Math.sqrt(Math.max(0.02,1-2*zeta*zeta));document.getElementById('r').value=rr;document.getElementById('rv').textContent=rr.toFixed(2);">Se placer à la résonance</button>
+</div>
+<div class="info" id="info"></div>
+
+<script>
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+const BLUE='#378ADD',RED='#E24B4A',GREEN='#1D9E75',ORANGE='#D85A30',VIOLET='#7F77DD',INK='#3d3d3a',GREY='#9aa0a6',AX='#c8ccd0';
+let W=0,H=0,dpr=1,paused=false,rr=0.6,zeta=0.12,ph=0,scaleTop=6;   // scaleTop : haut d'échelle animé
+function syncSize(){const r=cv.getBoundingClientRect();dpr=window.devicePixelRatio||1;
+  const nW=Math.round(r.width)||700,nH=Math.round(r.height)||360;
+  if(nW!==W||nH!==H){W=nW;H=nH;cv.width=W*dpr;cv.height=H*dpr;}ctx.setTransform(dpr,0,0,dpr,0,0);}
+document.getElementById('r').addEventListener('input',e=>{rr=+e.target.value;document.getElementById('rv').textContent=rr.toFixed(2);});
+document.getElementById('z').addEventListener('input',e=>{zeta=+e.target.value;document.getElementById('zv').textContent=zeta.toFixed(2);});
+function amp(r,z){return 1/Math.sqrt((1-r*r)*(1-r*r)+(2*z*r)*(2*z*r));}
+function phase(r,z){return Math.atan2(2*z*r,1-r*r);}
+function vArrow(x,y,vx,vy,col){const len=Math.hypot(vx,vy);if(len<3)return;const ex=x+vx,ey=y+vy;
+  ctx.strokeStyle=col;ctx.lineWidth=2.6;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(ex,ey);ctx.stroke();
+  const a=Math.atan2(vy,vx);ctx.fillStyle=col;ctx.save();ctx.translate(ex,ey);ctx.rotate(a);ctx.beginPath();ctx.moveTo(7,0);ctx.lineTo(-4,-4);ctx.lineTo(-4,4);ctx.closePath();ctx.fill();ctx.restore();}
+
+function draw(){syncSize();ctx.clearRect(0,0,W,H);ctx.fillStyle='#fff';ctx.fillRect(0,0,W,H);
+  if(!paused)ph+=rr*0.09;
+  const A=amp(rr,zeta),phi=phase(rr,zeta);
+  const hasPeak=zeta<0.7071,rres=hasPeak?Math.sqrt(1-2*zeta*zeta):0;
+  const Apeak=hasPeak?amp(rres,zeta):amp(0.1,zeta);
+  // ---- échelle verticale ADAPTATIVE : englobe toujours le pic (+10% de marge) ----
+  const target=Math.max(2,Apeak*1.12);
+  scaleTop+=(target-scaleTop)*0.12;     // transition douce
+
+  // ===== gauche : oscillateur entretenu =====
+  const cyy=H*0.5,wallX=W*0.05,eqX=W*0.20;
+  const maxTravel=(eqX-wallX)-42;                       // jamais dans le mur
+  const scaleA=maxTravel/scaleTop;
+  const Adisp=Math.min(A,scaleTop);                     // amplitude visible bornée par l'échelle
+  const md=Adisp*scaleA*Math.cos(ph-phi),mxp=eqX+md;
+  ctx.strokeStyle=INK;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(wallX,cyy-46);ctx.lineTo(wallX,cyy+46);ctx.stroke();
+  ctx.strokeStyle='#bbb';ctx.lineWidth=1;for(let h=cyy-44;h<cyy+46;h+=10){ctx.beginPath();ctx.moveTo(wallX,h);ctx.lineTo(wallX-8,h+8);ctx.stroke();}
+  ctx.strokeStyle='#7f8790';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(wallX,cyy);const n=14;
+  for(let i=0;i<=n;i++){const t=i/n,px=wallX+(mxp-22-wallX)*t,py=cyy+(i%2?9:-9)*(i>0&&i<n?1:0);ctx.lineTo(px,py);}ctx.lineTo(mxp-22,cyy);ctx.stroke();
+  const eL=eqX-Adisp*scaleA,eR=eqX+Adisp*scaleA;
+  ctx.strokeStyle='rgba(216,90,48,0.6)';ctx.setLineDash([4,4]);ctx.lineWidth=1.3;
+  ctx.beginPath();ctx.moveTo(eL,cyy-30);ctx.lineTo(eL,cyy+30);ctx.moveTo(eR,cyy-30);ctx.lineTo(eR,cyy+30);ctx.stroke();ctx.setLineDash([]);
+  ctx.strokeStyle='rgba(0,0,0,0.18)';ctx.setLineDash([3,4]);ctx.beginPath();ctx.moveTo(eqX,cyy-40);ctx.lineTo(eqX,cyy+40);ctx.stroke();ctx.setLineDash([]);
+  ctx.fillStyle='#eef4fb';ctx.strokeStyle=BLUE;ctx.lineWidth=2.5;ctx.beginPath();ctx.roundRect(mxp-22,cyy-22,44,44,6);ctx.fill();ctx.stroke();
+  const F=22*Math.cos(ph);vArrow(mxp,cyy-40,F,0,RED);
+  ctx.fillStyle=RED;ctx.font='11px system-ui';ctx.textAlign='center';ctx.fillText('F(t)',mxp,cyy-52);
+  ctx.fillStyle=GREY;ctx.font='10px system-ui';ctx.fillText('amplitude A',eqX,cyy+58);
+
+  // ===== droite : courbe de résonance =====
+  const gx=W*0.37,gw=W*0.58,gy0=H*0.86,gh=H*0.68,rmax=2.5;
+  const TX=r=>gx+(r/rmax)*gw, AY=a=>gy0-(Math.min(a,scaleTop)/scaleTop)*gh;
+  ctx.strokeStyle=AX;ctx.lineWidth=1.4;ctx.beginPath();ctx.moveTo(gx,gy0);ctx.lineTo(gx+gw,gy0);ctx.moveTo(gx,gy0);ctx.lineTo(gx,gy0-gh);ctx.stroke();
+  ctx.fillStyle=GREY;ctx.font='11px system-ui';ctx.textAlign='left';ctx.fillText('A (× A statique)',gx+4,gy0-gh-6);ctx.fillText('ω/ω₀',gx+gw-32,gy0+14);
+  ctx.textAlign='center';for(let t=0;t<=2.5;t+=0.5){ctx.fillStyle=GREY;ctx.font='9px ui-monospace';ctx.fillText(t.toFixed(1),TX(t),gy0+13);
+    ctx.strokeStyle='#eef0f2';ctx.beginPath();ctx.moveTo(TX(t),gy0);ctx.lineTo(TX(t),gy0-gh);ctx.stroke();}
+  // graduations verticales adaptatives
+  const stepA=scaleTop<=4?1:(scaleTop<=9?2:5);
+  ctx.textAlign='right';
+  for(let a=stepA;a<=scaleTop;a+=stepA){ctx.strokeStyle='#f0f2f4';ctx.beginPath();ctx.moveTo(gx,AY(a));ctx.lineTo(gx+gw,AY(a));ctx.stroke();
+    ctx.fillStyle=GREY;ctx.font='9px ui-monospace';ctx.fillText(a,gx-4,AY(a)+3);}
+  ctx.strokeStyle='rgba(29,158,117,0.6)';ctx.setLineDash([5,4]);ctx.lineWidth=1.4;ctx.beginPath();ctx.moveTo(TX(1),gy0);ctx.lineTo(TX(1),gy0-gh);ctx.stroke();ctx.setLineDash([]);
+  ctx.fillStyle=GREEN;ctx.font='600 11px system-ui';ctx.textAlign='center';ctx.fillText('ω₀',TX(1),gy0-gh-6);
+  // courbes de référence
+  [[0.1,'#d7dde3'],[0.25,'#c6ccd3'],[0.5,'#b3bac2']].forEach(zr=>{ctx.strokeStyle=zr[1];ctx.lineWidth=1.4;ctx.beginPath();
+    for(let r=0.02;r<=rmax;r+=0.02){const y=AY(amp(r,zr[0]));r===0.02?ctx.moveTo(TX(r),y):ctx.lineTo(TX(r),y);}ctx.stroke();});
+  // courbe courante
+  ctx.strokeStyle=BLUE;ctx.lineWidth=2.6;ctx.beginPath();for(let r=0.02;r<=rmax;r+=0.02){const y=AY(amp(r,zeta));r===0.02?ctx.moveTo(TX(r),y):ctx.lineTo(TX(r),y);}ctx.stroke();
+  if(hasPeak){ctx.fillStyle=VIOLET;ctx.beginPath();ctx.arc(TX(rres),AY(Apeak),4,0,7);ctx.fill();
+    ctx.font='600 11px system-ui';ctx.textAlign='center';ctx.fillText('pic A='+Apeak.toFixed(1),TX(rres),AY(Apeak)-9);}
+  ctx.strokeStyle='rgba(0,0,0,0.18)';ctx.setLineDash([3,3]);ctx.beginPath();ctx.moveTo(TX(rr),gy0);ctx.lineTo(TX(rr),AY(A));ctx.lineTo(gx,AY(A));ctx.stroke();ctx.setLineDash([]);
+  ctx.fillStyle=RED;ctx.beginPath();ctx.arc(TX(rr),AY(A),6,0,7);ctx.fill();ctx.strokeStyle='#fff';ctx.lineWidth=1.4;ctx.stroke();
+
+  const Q=1/(2*zeta);
+  document.getElementById('fml').innerHTML='<b>A(ω) = (F₀/m) / √[(ω₀²−ω²)² + (2ζω₀ω)²]</b> &nbsp;|&nbsp; résonance près de ω₀ &nbsp;|&nbsp; facteur de qualité Q ≈ 1/(2ζ)';
+  document.getElementById('info').innerHTML='ω/ω₀ = '+rr.toFixed(2)+' → <b style="color:'+RED+'">A = '+A.toFixed(2)+'</b> × l\'amplitude statique. '+
+    (hasPeak?'Pic à ω_r = '+rres.toFixed(2)+'·ω₀, A_max = '+Apeak.toFixed(2)+'. ':'ζ > 0,707 : plus de pic, l\'amplitude ne fait que décroître. ')+
+    'Q ≈ '+Q.toFixed(1)+' : '+(zeta<0.15?'faible amortissement ⇒ pic HAUT et ÉTROIT.':'amortissement fort ⇒ pic bas et large.')+
+    ' À ω = ω₀, réponse en quadrature (φ = 90°).';
+  requestAnimationFrame(draw);}
+draw();
+</script>
